@@ -8,6 +8,7 @@ require("./services/firebaseAdmin");
 
 const judgeCpp = require("./services/judgeCpp");
 const saveSubmission = require("./services/saveSubmission");
+const { authenticateToken } = require("./services/auth");
 
 const app = express();
 
@@ -29,14 +30,15 @@ app.get("/", (req, res) => {
 
 /* ─────────────────────────────────────────
    POST /submit
-   Body: { problemId, code, userId? }
+   Body: { problemId, code }
    Response: { success, verdict, passed, total }
 ───────────────────────────────────────── */
-app.post("/submit", async (req, res) => {
-    const { problemId, code, userId } = req.body;
+app.post("/submit", authenticateToken, async (req, res) => {
+    const { problemId, code } = req.body;
+    const userId = req.user.uid;
     console.log(`\n📬 [Submit Route] Received submission request:`);
     console.log(`   - problemId: "${problemId}"`);
-    console.log(`   - userId:    "${userId || 'anonymous'}"`);
+    console.log(`   - userId:    "${userId}"`);
     console.log(`   - code length: ${code ? code.length : 0} characters`);
 
     if (!problemId || !code) {

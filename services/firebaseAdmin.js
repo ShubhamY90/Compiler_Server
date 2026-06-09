@@ -30,7 +30,10 @@ if (!getApps().length) {
     }
 }
 
+const { getAuth } = require("firebase-admin/auth");
+
 const db = getFirestore();
 db.settings({ databaseId: "default" });
+const auth = getAuth();
 
-module.exports = { db };
+module.exports = { db, auth };
