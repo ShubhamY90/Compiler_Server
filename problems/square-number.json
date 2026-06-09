@@ -1,0 +1,24 @@
+{
+    "id": "square-number",
+    "title": "Square Number",
+    "timeLimit": 2000,
+    "memoryLimit": 256,
+    "testCases": [
+        {
+            "input": "5",
+            "output": "25"
+        },
+        {
+            "input": "10",
+            "output": "100"
+        },
+        {
+            "input": "7",
+            "output": "49"
+        },
+        {
+            "input": "8",
+            "output": "49"
+        }
+    ]
+}
