@@ -38,7 +38,10 @@ async function fetchProblem(problemId) {
                 `hiddenTestCases[${i}] for "${problemId}" is missing input or output`
             );
         }
-        return { input: String(tc.input), output: String(tc.output) };
+        return {
+            input: String(tc.input).replace(/\\n/g, '\n'),
+            output: String(tc.output).replace(/\\n/g, '\n')
+        };
     });
 
     let timeLimit = 2000;

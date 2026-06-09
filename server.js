@@ -1,12 +1,12 @@
 require("dotenv").config();
 
 const express = require("express");
-const cors    = require("cors");
+const cors = require("cors");
 
 // Initialise Firebase Admin first (all other services depend on it)
 require("./services/firebaseAdmin");
 
-const judgeCpp       = require("./services/judgeCpp");
+const judgeCpp = require("./services/judgeCpp");
 const saveSubmission = require("./services/saveSubmission");
 
 const app = express();
@@ -23,6 +23,10 @@ app.use(cors({
 
 app.use(express.json());
 
+app.get("/", (req, res) => {
+    res.send("Compiler Server Running");
+});
+
 /* ─────────────────────────────────────────
    POST /submit
    Body: { problemId, code, userId? }
@@ -30,8 +34,13 @@ app.use(express.json());
 ───────────────────────────────────────── */
 app.post("/submit", async (req, res) => {
     const { problemId, code, userId } = req.body;
+    console.log(`\n📬 [Submit Route] Received submission request:`);
+    console.log(`   - problemId: "${problemId}"`);
+    console.log(`   - userId:    "${userId || 'anonymous'}"`);
+    console.log(`   - code length: ${code ? code.length : 0} characters`);
 
     if (!problemId || !code) {
+        console.warn(`⚠️ [Submit Route] Missing problemId or code in request body!`);
         return res.status(400).json({
             success: false,
             verdict: "Bad Request",
@@ -41,9 +50,13 @@ app.post("/submit", async (req, res) => {
 
     let result;
     try {
+        console.log(`⚡ [Submit Route] Forwarding to judgeCpp...`);
         result = await judgeCpp(problemId, code);
+        console.log(`✅ [Submit Route] judgeCpp finished successfully.`);
+        console.log(`   - Verdict: ${result.verdict}`);
+        console.log(`   - Passed:  ${result.passed} / ${result.total}`);
     } catch (err) {
-        console.error("[/submit] Judge error:", err.message);
+        console.error(`❌ [Submit Route] Error occurred during judgeCpp:`, err);
         return res.status(500).json({
             success: false,
             verdict: "Internal Error",
@@ -53,14 +66,17 @@ app.post("/submit", async (req, res) => {
 
     // Persist submission if we have a userId (fire-and-forget — don't block response)
     if (userId) {
+        console.log(`💾 [Submit Route] Saving submission to database for userId: "${userId}"...`);
         saveSubmission({
             userId,
             problemId,
-            verdict:  result.verdict,
-            passed:   result.passed,
-            total:    result.total,
+            verdict: result.verdict,
+            passed: result.passed,
+            total: result.total,
+        }).then(() => {
+            console.log(`💾 [Submit Route] Submission saved successfully.`);
         }).catch((err) =>
-            console.error("[/submit] saveSubmission failed:", err.message)
+            console.error(`❌ [Submit Route] saveSubmission failed:`, err.message)
         );
     }
 
