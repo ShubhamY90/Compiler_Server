@@ -7,9 +7,9 @@ const fs = require("fs");
 // Initialise Firebase Admin first (all other services depend on it)
 const { db } = require("./services/firebaseAdmin");
 
-const judgeCpp       = require("./services/judgeCpp");
-const compileCpp     = require("./services/compileCpp");
-const runCpp         = require("./services/runCpp");
+const judgeCode      = require("./services/judgeCode");
+const runCode        = require("./services/runCode");
+const { getLanguageConfig } = require("./services/languageConfig");
 const saveSubmission = require("./services/saveSubmission");
 const { authenticateToken } = require("./services/auth");
 
@@ -41,11 +41,13 @@ function cleanup(dir) {
    Response: { success, verdict, passed, total }
 ───────────────────────────────────────── */
 app.post("/submit", authenticateToken, async (req, res) => {
-    const { problemId, code } = req.body;
+    const { problemId, code, language } = req.body;
     const userId = req.user.uid;
+    const lang = language || "cpp";
     console.log(`\n📬 [Submit Route] Received submission request:`);
     console.log(`   - problemId: "${problemId}"`);
     console.log(`   - userId:    "${userId}"`);
+    console.log(`   - language:  "${lang}"`);
     console.log(`   - code length: ${code ? code.length : 0} characters`);
 
     if (!problemId || !code) {
@@ -59,13 +61,13 @@ app.post("/submit", authenticateToken, async (req, res) => {
 
     let result;
     try {
-        console.log(`⚡ [Submit Route] Forwarding to judgeCpp...`);
-        result = await judgeCpp(problemId, code);
-        console.log(`✅ [Submit Route] judgeCpp finished successfully.`);
+        console.log(`⚡ [Submit Route] Forwarding to judgeCode...`);
+        result = await judgeCode(problemId, code, lang);
+        console.log(`✅ [Submit Route] judgeCode finished successfully.`);
         console.log(`   - Verdict: ${result.verdict}`);
         console.log(`   - Passed:  ${result.passed} / ${result.total}`);
     } catch (err) {
-        console.error(`❌ [Submit Route] Error occurred during judgeCpp:`, err);
+        console.error(`❌ [Submit Route] Error occurred during judgeCode:`, err);
         return res.status(500).json({
             success: false,
             verdict: "Internal Error",
@@ -119,9 +121,10 @@ app.post("/submit", authenticateToken, async (req, res) => {
    }
 ───────────────────────────────────────── */
 app.post("/run", authenticateToken, async (req, res) => {
-    const { problemId, code, customInput } = req.body;
+    const { problemId, code, customInput, language } = req.body;
     const isCustom = customInput !== undefined && customInput !== null;
-    console.log(`\n▶️  [Run Route] problemId="${problemId}" code length=${code?.length ?? 0} isCustom=${isCustom}`);
+    const lang = language || "cpp";
+    console.log(`\n▶️  [Run Route] problemId="${problemId}" code length=${code?.length ?? 0} isCustom=${isCustom} language=${lang}`);
 
     if (!problemId || !code) {
         return res.status(400).json({
@@ -195,13 +198,27 @@ app.post("/run", authenticateToken, async (req, res) => {
     }
 
     // 2. Compile
-    const compileResult = await compileCpp(code);
-    if (!compileResult.success) {
-        return res.json({
+    let compileResult;
+    let spawnCmd;
+    let spawnArgs;
+    try {
+        const { compile, command, args } = getLanguageConfig(lang);
+        compileResult = await compile(code);
+        if (!compileResult.success) {
+            return res.json({
+                success: false,
+                verdict: compileResult.verdict,
+                compileError: compileResult.output,
+                results: [],
+            });
+        }
+        spawnCmd = command(compileResult);
+        spawnArgs = args(compileResult);
+    } catch (err) {
+        return res.status(400).json({
             success: false,
-            verdict: compileResult.verdict,
-            compileError: compileResult.output,
-            results: [],
+            verdict: "Bad Request",
+            message: err.message
         });
     }
 
@@ -209,51 +226,55 @@ app.post("/run", authenticateToken, async (req, res) => {
     const results = [];
     let earlyExit = false;
 
-    for (let i = 0; i < sampleTestCases.length; i++) {
-        const tc = sampleTestCases[i];
-        const start = Date.now();
-        const runResult = await runCpp(compileResult.exePath, tc.input, timeLimit);
-        const elapsed = Date.now() - start;
+    try {
+        for (let i = 0; i < sampleTestCases.length; i++) {
+            const tc = sampleTestCases[i];
+            const start = Date.now();
+            const runResult = await runCode(spawnCmd, spawnArgs, lang, tc.input, timeLimit);
+            const elapsed = Date.now() - start;
 
-        const got      = runResult.output != null ? runResult.output.trim() : "";
-        const expected = tc.output.trim();
-        const passed   = isCustom ? runResult.success : (runResult.success && got === expected);
+            const got      = runResult.output != null ? runResult.output.trim() : "";
+            const expected = tc.output.trim();
+            const passed   = isCustom ? runResult.success : (runResult.success && got === expected);
 
-        results.push({
-            index:    i + 1,
-            input:    tc.input,
-            expected: isCustom ? null : tc.output,
-            structuredInput: tc.structuredInput ?? null,
-            got:      runResult.success ? runResult.output : (runResult.output || ""),
-            passed,
-            verdict:  isCustom
-                ? (runResult.success ? "Finished" : runResult.verdict)
-                : (passed ? "Accepted" : (runResult.success ? "Wrong Answer" : runResult.verdict)),
-            time:     `${elapsed}ms`,
-            executionTime: elapsed,
-            isCustom
-        });
+            results.push({
+                index:    i + 1,
+                input:    tc.input,
+                expected: isCustom ? null : tc.output,
+                structuredInput: tc.structuredInput ?? null,
+                got:      runResult.success ? runResult.output : (runResult.output || ""),
+                passed,
+                verdict:  isCustom
+                    ? (runResult.success ? "Finished" : runResult.verdict)
+                    : (passed ? "Accepted" : (runResult.success ? "Wrong Answer" : runResult.verdict)),
+                time:     `${elapsed}ms`,
+                executionTime: elapsed,
+                isCustom
+            });
 
-        // On TLE / Runtime Error, skip remaining cases
-        if (!runResult.success) {
-            for (let j = i + 1; j < sampleTestCases.length; j++) {
-                results.push({
-                    index:    j + 1,
-                    input:    sampleTestCases[j].input,
-                    expected: sampleTestCases[j].output,
-                    structuredInput: sampleTestCases[j].structuredInput ?? null,
-                    got:      "",
-                    passed:   false,
-                    verdict:  "Skipped",
-                    time:     "—",
-                });
+            // On TLE / Runtime Error, skip remaining cases
+            if (!runResult.success) {
+                for (let j = i + 1; j < sampleTestCases.length; j++) {
+                    results.push({
+                        index:    j + 1,
+                        input:    sampleTestCases[j].input,
+                        expected: sampleTestCases[j].output,
+                        structuredInput: sampleTestCases[j].structuredInput ?? null,
+                        got:      "",
+                        passed:   false,
+                        verdict:  "Skipped",
+                        time:     "—",
+                    });
+                }
+                earlyExit = true;
+                break;
             }
-            earlyExit = true;
-            break;
+        }
+    } finally {
+        if (compileResult && compileResult.submissionDir) {
+            cleanup(compileResult.submissionDir);
         }
     }
-
-    cleanup(compileResult.submissionDir);
 
     const allPassed   = results.every(r => r.passed);
     const firstFailed = results.find(r => !r.passed);
