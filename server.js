@@ -292,3 +292,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Compiler server running on port ${PORT}`);
 });
+
+// ── BullMQ worker ─────────────────────────────────────────────────────────────
+// Starts alongside the HTTP server. All execution logic stays in services/.
+require('./src/worker');
