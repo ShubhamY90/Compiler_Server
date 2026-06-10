@@ -44,6 +44,7 @@ async function judgeCpp(problemId, code) {
         return {
             success: false,
             verdict: compileResult.verdict,
+            compileError: compileResult.output,
             passed,
             total
         };

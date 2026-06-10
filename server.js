@@ -119,8 +119,9 @@ app.post("/submit", authenticateToken, async (req, res) => {
    }
 ───────────────────────────────────────── */
 app.post("/run", authenticateToken, async (req, res) => {
-    const { problemId, code } = req.body;
-    console.log(`\n▶️  [Run Route] problemId="${problemId}" code length=${code?.length ?? 0}`);
+    const { problemId, code, customInput } = req.body;
+    const isCustom = customInput !== undefined && customInput !== null;
+    console.log(`\n▶️  [Run Route] problemId="${problemId}" code length=${code?.length ?? 0} isCustom=${isCustom}`);
 
     if (!problemId || !code) {
         return res.status(400).json({
@@ -130,43 +131,59 @@ app.post("/run", authenticateToken, async (req, res) => {
         });
     }
 
-    // 1. Fetch sample test cases from Firestore
+    // 1. Fetch sample test cases from Firestore or build from customInput
     let sampleTestCases = [];
     let timeLimit = 2000;
     try {
-        const [tcSnap, probSnap] = await Promise.all([
-            db.collection("problem_testcases").doc(problemId).get(),
-            db.collection("problems").doc(problemId).get(),
-        ]);
+        if (isCustom) {
+            sampleTestCases = [{
+                input: String(customInput).replace(/\\n/g, "\n"),
+                output: "",
+                structuredInput: null,
+            }];
 
-        if (!tcSnap.exists) {
-            return res.status(404).json({
-                success: false,
-                verdict: "Not Found",
-                message: `No test cases found for problem "${problemId}"`,
-            });
-        }
-
-        const raw = tcSnap.data().sampleTestCases ?? [];
-        sampleTestCases = raw.map(tc => ({
-            input:  String(tc.input  ?? "").replace(/\\n/g, "\n"),
-            output: String(tc.output ?? "").replace(/\\n/g, "\n"),
-            structuredInput: tc.structuredInput ?? tc.structured_input ?? null,
-        }));
-
-        if (probSnap.exists) {
-            const pd = probSnap.data();
-            if (pd.timeLimit != null) {
-                timeLimit = pd.timeLimit <= 60 ? pd.timeLimit * 1000 : pd.timeLimit;
+            const probSnap = await db.collection("problems").doc(problemId).get();
+            if (probSnap.exists) {
+                const pd = probSnap.data();
+                if (pd.timeLimit != null) {
+                    timeLimit = pd.timeLimit <= 60 ? pd.timeLimit * 1000 : pd.timeLimit;
+                }
             }
-        }
+        } else {
+            const [tcSnap, probSnap] = await Promise.all([
+                db.collection("problem_testcases").doc(problemId).get(),
+                db.collection("problems").doc(problemId).get(),
+            ]);
 
-        if (sampleTestCases.length === 0) {
-            return res.status(404).json({
-                success: false,
-                verdict: "Not Found",
-                message: "No sample test cases configured for this problem.",
-            });
+            if (!tcSnap.exists) {
+                return res.status(404).json({
+                    success: false,
+                    verdict: "Not Found",
+                    message: `No test cases found for problem "${problemId}"`,
+                });
+            }
+
+            const raw = tcSnap.data().sampleTestCases ?? [];
+            sampleTestCases = raw.map(tc => ({
+                input:  String(tc.input  ?? "").replace(/\\n/g, "\n"),
+                output: String(tc.output ?? "").replace(/\\n/g, "\n"),
+                structuredInput: tc.structuredInput ?? tc.structured_input ?? null,
+            }));
+
+            if (probSnap.exists) {
+                const pd = probSnap.data();
+                if (pd.timeLimit != null) {
+                    timeLimit = pd.timeLimit <= 60 ? pd.timeLimit * 1000 : pd.timeLimit;
+                }
+            }
+
+            if (sampleTestCases.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    verdict: "Not Found",
+                    message: "No sample test cases configured for this problem.",
+                });
+            }
         }
     } catch (err) {
         console.error("[Run Route] Firestore error:", err.message);
@@ -188,7 +205,7 @@ app.post("/run", authenticateToken, async (req, res) => {
         });
     }
 
-    // 3. Run each sample test case
+    // 3. Run each test case
     const results = [];
     let earlyExit = false;
 
@@ -200,17 +217,21 @@ app.post("/run", authenticateToken, async (req, res) => {
 
         const got      = runResult.output != null ? runResult.output.trim() : "";
         const expected = tc.output.trim();
-        const passed   = runResult.success && got === expected;
+        const passed   = isCustom ? runResult.success : (runResult.success && got === expected);
 
         results.push({
             index:    i + 1,
             input:    tc.input,
-            expected: tc.output,
+            expected: isCustom ? null : tc.output,
             structuredInput: tc.structuredInput ?? null,
             got:      runResult.success ? runResult.output : (runResult.output || ""),
             passed,
-            verdict:  passed ? "Accepted" : (runResult.success ? "Wrong Answer" : runResult.verdict),
+            verdict:  isCustom
+                ? (runResult.success ? "Finished" : runResult.verdict)
+                : (passed ? "Accepted" : (runResult.success ? "Wrong Answer" : runResult.verdict)),
             time:     `${elapsed}ms`,
+            executionTime: elapsed,
+            isCustom
         });
 
         // On TLE / Runtime Error, skip remaining cases
@@ -239,7 +260,9 @@ app.post("/run", authenticateToken, async (req, res) => {
 
     return res.json({
         success: allPassed,
-        verdict: allPassed ? "All Samples Passed" : (firstFailed?.verdict ?? "Wrong Answer"),
+        verdict: isCustom
+            ? (allPassed ? "Finished" : (firstFailed?.verdict ?? "Runtime Error"))
+            : (allPassed ? "All Samples Passed" : (firstFailed?.verdict ?? "Wrong Answer")),
         results,
     });
 });
