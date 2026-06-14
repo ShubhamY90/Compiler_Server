@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+const redisClient = require("./redis/client");
+
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
@@ -29,6 +31,42 @@ app.use(express.json());
 
 app.get("/", (req, res) => {
     res.send("Compiler Server Running");
+});
+
+/* ─────────────────────────────────────────
+   GET /health
+   Checks Redis + Firebase connectivity.
+   Returns 200 UP, or 503 DEGRADED/DOWN.
+───────────────────────────────────────── */
+app.get("/health", async (_req, res) => {
+    const health = {
+        status: "UP",
+        timestamp: new Date().toISOString(),
+        uptime: Math.floor(process.uptime()),
+        services: {},
+    };
+
+    // 1. Redis ping
+    try {
+        const pong = await redisClient.ping();
+        health.services.redis = pong === "PONG" ? "CONNECTED" : "DEGRADED";
+        if (pong !== "PONG") health.status = "DEGRADED";
+    } catch (err) {
+        health.services.redis = "ERROR";
+        health.status = "DEGRADED";
+    }
+
+    // 2. Firebase / Firestore ping (lightweight read)
+    try {
+        await db.collection("problems").limit(1).get();
+        health.services.firebase = "CONNECTED";
+    } catch (err) {
+        health.services.firebase = "ERROR";
+        health.status = health.status === "UP" ? "DEGRADED" : "DOWN";
+    }
+
+    const statusCode = health.status === "UP" ? 200 : 503;
+    res.status(statusCode).json(health);
 });
 
 function cleanup(dir) {

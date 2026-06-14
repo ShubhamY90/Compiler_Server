@@ -3,12 +3,27 @@ const { Worker, Queue } = require('bullmq');
 const judgeCode = require('../services/judgeCode');
 
 // ── BullMQ connection options ─────────────────────────────────────────────────
-// BullMQ manages its own internal Redis connections; pass options, not a shared
-// ioredis instance, so it can control blocking-read connections independently.
-const connection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: Number(process.env.REDIS_PORT) || 6379,
-};
+// Supports both plain redis:// (local) and Upstash rediss:// (TLS, cloud).
+// BullMQ manages its own internal Redis connections; we pass options rather
+// than a shared ioredis instance so it can control blocking reads itself.
+const redisUrl = process.env.REDIS_URL || '';
+let connection;
+if (redisUrl.startsWith('rediss://') || redisUrl.startsWith('redis://')) {
+  const parsed = new URL(redisUrl);
+  connection = {
+    host:     parsed.hostname,
+    port:     Number(parsed.port) || (redisUrl.startsWith('rediss://') ? 6380 : 6379),
+    password: parsed.password || undefined,
+    username: parsed.username || undefined,
+    tls:      redisUrl.startsWith('rediss://') ? {} : undefined,
+  };
+} else {
+  // Legacy fallback: plain host + port env vars
+  connection = {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: Number(process.env.REDIS_PORT) || 6379,
+  };
+}
 
 // ── Results queue (producer side) ─────────────────────────────────────────────
 const resultsQueue = new Queue('results', {
