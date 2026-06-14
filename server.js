@@ -37,9 +37,7 @@ const corsOptions = {
     credentials: true,
 };
 
-// Handle OPTIONS preflight for all routes
-app.options("*", cors(corsOptions));
-
+// Handle OPTIONS preflight for all routes — cors() handles this automatically
 app.use(cors(corsOptions));
 
 app.use(express.json());
