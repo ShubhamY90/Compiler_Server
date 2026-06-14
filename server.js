@@ -17,14 +17,22 @@ const { authenticateToken } = require("./services/auth");
 
 const app = express();
 
+const configuredOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(",").map(o => o.trim())
+    : [];
+const corsOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:3001",
+    "https://code-duel-f.vercel.app",
+    ...configuredOrigins,
+];
+
 app.use(cors({
-    origin: [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:3001",
-    ],
+    origin: corsOrigins,
     methods: ["POST", "GET", "OPTIONS"],
+    credentials: true,
 }));
 
 app.use(express.json());
