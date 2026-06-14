@@ -30,11 +30,17 @@ const corsOrigins = [
     ...configuredOrigins,
 ];
 
-app.use(cors({
+const corsOptions = {
     origin: corsOrigins,
-    methods: ["POST", "GET", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-}));
+};
+
+// Handle OPTIONS preflight for all routes
+app.options("*", cors(corsOptions));
+
+app.use(cors(corsOptions));
 
 app.use(express.json());
 
